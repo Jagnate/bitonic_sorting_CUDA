@@ -180,7 +180,7 @@ int main(int argc, char **argv) {
     // copy to device
     int *d;
     cudaMalloc(&d, padded * sizeof(int));
-    cudaMemcpy(d, h, padded * sizeof(int), cudaMemcpyHostToDevice)
+    cudaMemcpy(d, h, padded * sizeof(int), cudaMemcpyHostToDevice);
 
     // launch: single block, N threads, shared memory N * sizeof(int)
     // dim3 blocks(1);
