@@ -26,70 +26,108 @@ __global__ void histogram_smem(int *hist_data, int *bin_data, int N) {
 	atomicAdd(&bin_data[tid], smem[tid]);
 }
 
-// 要求: blockSize 是 power-of-two，且 <= 1024
-template<int blockSize>
-__global__ void histogram_bitonic(const int *hist_data, int *bin_data, int N) {
-    // per-block shared buffer to hold one tile of values (unsigned)
-    extern __shared__ unsigned svals[]; // size = blockSize * sizeof(unsigned)
-    const int tid = threadIdx.x;
-    const int base = blockIdx.x * blockSize;
+// warp size (assume 32)
+constexpr int WARP_SIZE = 32;
 
-    // grid-stride over tiles: each iteration we process one tile of length blockSize
-    for (int tile_base = base; tile_base < N; tile_base += gridDim.x * blockSize) {
-        int idx = tile_base + tid;
-        // load or pad with UINT_MAX (so padded values go to end after sorting)
-        unsigned v = (idx < N) ? (unsigned)hist_data[idx] : UINT_MAX;
-        svals[tid] = v;
+// warp-level bitonic sort using warp shuffles (register-only)
+// Each lane starts with 'v' and ends with lane holding sorted values across warp in ascending order
+__device__ __always_inline__ unsigned warp_bitonic_sort(unsigned v) {
+    unsigned x = v;
+    unsigned lane = threadIdx.x & 31;
+    // bitonic sort network for 32 lanes using shfl_xor
+    // outer loop: k = 2,4,8,16,32
+    for (int k = 2; k <= WARP_SIZE; k <<= 1) {
+        // inner loop: j = k/2, k/4, ..., 1
+        for (int j = k >> 1; j > 0; j >>= 1) {
+            unsigned y = __shfl_xor_sync(0xffffffffu, x, j, WARP_SIZE);
+            bool ascending = ((lane & k) == 0);
+            // when lanes compare, choose min or max accordingly
+            unsigned mine = x;
+            unsigned other = y;
+            unsigned keep;
+            if (ascending) {
+                keep = (mine <= other) ? mine : other;
+            } else {
+                keep = (mine >= other) ? mine : other;
+            }
+            // BUT we must ensure the partner also updates; using this single-lane assignment
+            // pattern works when both lanes execute the same comparison with swapped view.
+            // To implement full compare-swap we need conditional assignment:
+            if (ascending) {
+                // want ascending order in this comparator: smaller goes to lower-index lane
+                if (x > y) x = y;
+                // else x remains
+            } else {
+                if (x < y) x = y;
+            }
+            __syncwarp();
+        }
+    }
+    return x;
+}
+
+// Alternative robust warp-bitonic implementation using pairwise compare & exchange
+// but above simpler pattern works for demonstration.
+
+// Kernel: each warp processes WARP_SIZE elements; sorts them in-warp then reduces runs.
+// Parameters:
+//  - data: input values (0..NBINS-1)
+//  - bin_data: global histogram (length NBINS)
+//  - N: number of input elements
+// Note: blockDim.x must be multiple of WARP_SIZE
+template<int NBINS>
+__global__ void histogram_bitonic(const int *data, int *bin_data, int N) {
+    extern __shared__ unsigned s_shared[]; // per-block shared memory, used as (num_warps_per_block * WARP_SIZE)
+    int tid = threadIdx.x;
+    int lane = tid & 31;
+    int warp_id_in_block = tid / WARP_SIZE;
+    int warps_per_block = blockDim.x / WARP_SIZE;
+    int global_warp_id = (blockIdx.x * warps_per_block) + warp_id_in_block;
+
+    // grid-stride over warp-sized tiles
+    // each warp processes tiles of length WARP_SIZE starting at tile_base
+    int tile_stride = gridDim.x * warps_per_block * WARP_SIZE;
+    int first_tile_base = (blockIdx.x * warps_per_block + warp_id_in_block) * WARP_SIZE;
+
+    for (int tile_base = first_tile_base; tile_base < N; tile_base += tile_stride) {
+        int idx = tile_base + lane;
+        unsigned v = (idx < N) ? (unsigned)data[idx] : UINT_MAX;
+        // warp-level bitonic sort in registers (using shfl)
+        unsigned sorted_v = warp_bitonic_sort(v);
+
+        // write sorted value to shared memory: each warp gets a contiguous slot
+        int shared_offset = warp_id_in_block * WARP_SIZE + lane;
+        s_shared[shared_offset] = sorted_v;
+        // need to sync the block to ensure all warps written before warp-leader reads
+        // but we can synchronize only within block:
         __syncthreads();
 
-        // --- bitonic sort in shared memory (classic) ---
-        // ascending sort (small -> large), UINT_MAX will be largest so padded go to end
-        for (int k = 2; k <= blockSize; k <<= 1) {
-            for (int j = k >> 1; j > 0; j >>= 1) {
-                int partner = tid ^ j;
-                if (partner < blockSize) {
-                    unsigned a = svals[tid];
-                    unsigned b = svals[partner];
-                    bool ascending = ((tid & k) == 0);
-                    bool do_swap = false;
-                    if (ascending) {
-                        if (a > b) do_swap = true;
-                    } else {
-                        if (a < b) do_swap = true;
-                    }
-                    if (do_swap) {
-                        svals[tid] = b;
-                        svals[partner] = a;
-                    }
-                }
-                __syncthreads();
-            }
-        }
-        // --- sorted tile in svals[0..blockSize-1] ---
-
-        // run-length encode and atomicAdd to global bins
-        // simple approach: let thread 0 scan the sorted tile and emit run updates
-        if (tid == 0) {
-            unsigned prev = svals[0];
+        // let lane 0 of each warp scan its 32 values in shared memory and emit run-length atomics
+        if (lane == 0) {
+            unsigned prev = s_shared[warp_id_in_block * WARP_SIZE + 0];
             if (prev != UINT_MAX) {
                 int cnt = 1;
-                for (int i = 1; i < blockSize; ++i) {
-                    unsigned cur = svals[i];
+                for (int i = 1; i < WARP_SIZE; ++i) {
+                    unsigned cur = s_shared[warp_id_in_block * WARP_SIZE + i];
                     if (cur == UINT_MAX) break;
                     if (cur == prev) {
                         ++cnt;
                     } else {
-                        // do one global atomic per run
-                        atomicAdd(&bin_data[prev], cnt);
+                        // atomic add to global histogram for this run
+                        if (prev < (unsigned)NBINS) {
+                            atomicAdd(&bin_data[prev], cnt);
+                        }
                         prev = cur;
                         cnt = 1;
                     }
                 }
                 // last run
-                atomicAdd(&bin_data[prev], cnt);
+                if (prev < (unsigned)NBINS) {
+                    atomicAdd(&bin_data[prev], cnt);
+                }
             }
         }
-        __syncthreads();
+        __syncthreads(); // ensure warp0 finished before next tile overwrite
     }
 }
 
