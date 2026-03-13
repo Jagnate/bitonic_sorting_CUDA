@@ -48,6 +48,40 @@ __global__ void bitonic_sort_naive(int *d_keys, int N) {
     if (tid < N) d_keys[tid] = s[tid];
 }
 
+__global__ void bitonic_sort_v1(int *d_keys, int N) {
+    extern __shared__ int s[]; // size N
+    int tid = threadIdx.x;
+
+    // load to shared mem
+    if (tid < N) s[tid] = d_keys[tid];
+    __syncthreads();
+
+    // bitonic sort network
+    for (int k = 2; k <= N; k <<= 1) {
+        for (int j = k >> 1; j > 0; j >>= 1) {
+            int ixj = tid ^ j;
+            int a = s[tid];
+            int b = s[ixj];
+
+            // branchless min/max (ternary compiles to select, not branch)
+            int minv = (a < b) ? a : b;
+            int maxv = (a < b) ? b : a;
+
+            // decide per-thread whether this thread should keep min or max
+            bool ascending = ((tid & k) == 0);
+
+            // write only your own slot (partner will write its own). No races.
+            s[tid] = ascending ? minv : maxv;
+
+            // synchronization as before
+            __syncthreads();
+        }
+    }
+
+    // write back
+    if (tid < N) d_keys[tid] = s[tid];
+}
+
 // Host test
 int main(int argc, char **argv) {
     // N must be a power of two and <= 1024 (typical max threads per block)
@@ -75,7 +109,8 @@ int main(int argc, char **argv) {
     cudaEventCreate(&start);
     cudaEventCreate(&stop);
     cudaEventRecord(start);
-    bitonic_sort_naive<<<blocks, threads, sharedBytes>>>(d, N);
+    //bitonic_sort_naive<<<blocks, threads, sharedBytes>>>(d, N);
+    bitonic_sort_v1<<<blocks, threads, sharedBytes>>>(d, N);
     cudaEventRecord(stop);
     cudaEventSynchronize(stop);
     cudaEventElapsedTime(&milliseconds, start, stop);
