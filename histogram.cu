@@ -32,7 +32,7 @@ __global__ void histogram_bitonic_sorting(const int *hist_data, int *bin_data, i
     int lane = tid & 31;
     int warp_id = tid >> 5; // 0..warps_per_block-1
 
-    int *warp_hist = s_mem + warp_id * NBINS
+    int *warp_hist = smem + warp_id * NBINS;
 
     // initialize shared block bins (parallel)
     for (int b = lane; b < NBINS; b += blockDim.x) smem[b] = 0;
