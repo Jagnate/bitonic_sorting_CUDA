@@ -72,7 +72,7 @@ int main()
     cudaEventCreate(&stop);
     cudaEventRecord(start);
     //histogram<<<Grid, Block>>>(hist_data, bin_data);
-    histgram<blockSize><<<Grid, Block>>>(hist_data, bin_data, N);
+    histogram_smem<blockSize><<<Grid, Block>>>(hist_data, bin_data, N);
     cudaEventRecord(stop);
     cudaEventSynchronize(stop);
     cudaEventElapsedTime(&milliseconds, start, stop);
