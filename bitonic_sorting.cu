@@ -53,6 +53,7 @@ int main(int argc, char **argv) {
     // N must be a power of two and <= 1024 (typical max threads per block)
     const int N = 1024; // you can change to 32/64/128/... but must be power of two
     size_t bytes = N * sizeof(int);
+    float milliseconds = 0;
 
     // allocate & fill host data
     int *h = (int*)malloc(bytes);
@@ -97,6 +98,7 @@ int main(int argc, char **argv) {
     bool same = true;
     for (int i = 0; i < N; ++i) if (h[i] != out[i]) { same = false; break; }
     printf("Matches std::sort? %s\n", same ? "YES" : "NO");
+    printf("latency = %f ms\n", milliseconds);
 
     // cleanup
     free(h);
