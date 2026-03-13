@@ -39,9 +39,6 @@ __global__ void bitonic_sort_naive(int *d_keys, int N) {
             __syncthreads();
         }
     }
-
-    // write back
-    if (tid < N) d_keys[tid] = s[tid];
 }
 
 // shared memory optimisation
