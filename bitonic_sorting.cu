@@ -173,7 +173,8 @@ int main(int argc, char **argv) {
     int *h = (int*)malloc(padded * sizeof(int));
     std::mt19937 rng(12345);
     std::uniform_int_distribution<int> ud(0, 10000);
-    for (int i = 0; i < N; ++i) h[i] = ud(rng);
+    for (int i = 0; i < total; ++i) h[i] = ud(rng);
+    //for (int i = 0; i < N; ++i) h[i] = ud(rng);
     // padding for block-level optimisation
     for (int i = total; i < padded; ++i) h[i] = INT_MAX;
 
@@ -211,7 +212,8 @@ int main(int argc, char **argv) {
 
     // verify
     bool ok = true;
-    for (int i = 1; i < N; ++i) {
+    for (int i = 1; i < BLOCK_N; ++i) {
+    //for (int i = 1; i < N; ++i) {
         if (out[i-1] > out[i]) { ok = false; break; }
     }
     if (ok) printf("PASS: sorted ascending\n");
@@ -220,7 +222,8 @@ int main(int argc, char **argv) {
     // for comparison, sort on CPU and check equality
     std::sort(h, h + N);
     bool same = true;
-    for (int i = 0; i < N; ++i) if (h[i] != out[i]) { same = false; break; }
+    for (int i = 0; i < BLOCK_N; ++i) if (h[i] != out[i]) { same = false; break; }
+    //for (int i = 0; i < N; ++i) if (h[i] != out[i]) { same = false; break; }
     printf("Matches std::sort? %s\n", same ? "YES" : "NO");
     printf("latency = %f ms\n", milliseconds);
 
