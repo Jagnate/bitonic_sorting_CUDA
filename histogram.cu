@@ -23,6 +23,35 @@ __global__ void histogram_smem(int *hist_data, int *bin_data, int N) {
 	atomicAdd(&bin_data[tid], smem[tid]);
 }
 
+template<int NBINS, int blockSize>
+__global__ void histogram_bitonic_sorting(const int *hist_data, int *bin_data, int N) {
+    __shared__ int smem[256]; // size >= NBINS (we'll use one copy per block)
+    int tid = threadIdx.x;
+    int lane = tid & 31;
+
+    // initialize shared block bins (parallel)
+    for (int b = tid; b < NBINS; b += blockDim.x) smem[b] = 0;
+    __syncthreads();
+
+    // strided processing
+    int gtid = blockIdx.x * blockDim.x + tid;
+    int stride = gridDim.x * blockDim.x;
+    for (int i = gtid; i < N; i += stride) {
+        int val = hist_data[i];
+        // accumulate into block-local bin in shared memory
+        atomicAdd(&smem[val], 1); // shared-memory atomic
+    }
+    __syncthreads();
+
+    // write block-local bins to global per-block array (each block writes to its own region)
+    // no atomic needed because index is unique per block
+    int base = blockIdx.x * NBINS;
+    for (int b = tid; b < NBINS; b += blockDim.x) {
+        bin_data[base + b] = smem[b];
+    }
+    // done
+}
+
 bool CheckResult(int *out, int *groudtruth, int N)
 {
     for (int i = 0; i < N; i++)
