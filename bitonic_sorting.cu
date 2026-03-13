@@ -168,8 +168,9 @@ int main(int argc, char **argv) {
     int total = 1 << 20;                    // total elements to sort (example)
     int numTiles = (total + BLOCK_N - 1) / BLOCK_N;
 
-    // allocate & fill host data
-    int *h = (int*)malloc(bytes);
+    // pad host array to numTiles * BLOCK_N with large sentinel (or INT_MAX)
+    int padded = numTiles * BLOCK_N;
+    int *h = (int*)malloc(padded * sizeof(int))
     std::mt19937 rng(12345);
     std::uniform_int_distribution<int> ud(0, 10000);
     for (int i = 0; i < N; ++i) h[i] = ud(rng);
