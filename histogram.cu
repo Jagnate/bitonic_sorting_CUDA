@@ -25,12 +25,17 @@ __global__ void histogram_smem(int *hist_data, int *bin_data, int N) {
 
 template<int NBINS, int blockSize>
 __global__ void histogram_bitonic_sorting(const int *hist_data, int *bin_data, int N) {
+    const int WARP_SIZE = 32;
+    const int warps_per_block = blockSize / WARP_SIZE;
     __shared__ int smem[NBINS]; // size >= NBINS (we'll use one copy per block)
     int tid = threadIdx.x;
     int lane = tid & 31;
+    int warp_id = tid >> 5; // 0..warps_per_block-1
+
+    int *warp_hist = s_mem + warp_id * NBINS
 
     // initialize shared block bins (parallel)
-    for (int b = tid; b < NBINS; b += blockDim.x) smem[b] = 0;
+    for (int b = lane; b < NBINS; b += blockDim.x) smem[b] = 0;
     __syncthreads();
 
     // strided processing
@@ -39,13 +44,14 @@ __global__ void histogram_bitonic_sorting(const int *hist_data, int *bin_data, i
     for (int i = gtid; i < N; i += stride) {
         int val = hist_data[i];
         // accumulate into block-local bin in shared memory
-        atomicAdd(&smem[val], 1); // shared-memory atomic
+        atomicAdd(&warp_hist[val], 1); // shared-memory atomic
     }
     __syncthreads();
 
-    int base = blockIdx.x * NBINS;
-    for (int b = tid; b < NBINS; b += blockDim.x) {
-        bin_data[base + b] = smem[b];
+    for (int b = lane; b < NBINS; b += WARP_SIZE) {
+        // sum across warps? we'll make one thread per (warp,bin) add to global
+        int v = warp_hist[b];
+        if (v) atomicAdd(&bin_data[b], v); // global atomic, but only warps_per_block times per bin
     }
     // done
 }
