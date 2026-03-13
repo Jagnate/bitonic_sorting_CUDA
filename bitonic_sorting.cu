@@ -12,6 +12,40 @@
 //  - launch with <<<1, N, N * sizeof(int)>>>
 // This sorts in-place the array d_keys (ascending).
 __global__ void bitonic_sort_naive(int *d_keys, int N) {
+    int tid = threadIdx.x;
+    if (tid >= N) return;
+
+    // bitonic sort network
+    for (int k = 2; k <= N; k <<= 1) {
+        for (int j = k >> 1; j > 0; j >>= 1) {
+            int ixj = tid ^ j; // partner index
+            if (ixj > tid) { // ensure one swap per pair
+                // determine sort direction for this stage
+                bool ascending = ((tid & k) == 0);
+                int a = d_keys[tid];
+                int b = d_keys[ixj];
+                if (ascending) {
+                    if (a > b) {
+                        d_keys[tid] = b;
+                        d_keys[ixj] = a;
+                    }
+                } else {
+                    if (a < b) {
+                        d_keys[tid] = b;
+                        d_keys[ixj] = a;
+                    }
+                }
+            }
+            __syncthreads();
+        }
+    }
+
+    // write back
+    if (tid < N) d_keys[tid] = s[tid];
+}
+
+// shared memory optimisation
+__global__ void bitonic_sort_v1(int *d_keys, int N) {
     extern __shared__ int s[]; // size N
     int tid = threadIdx.x;
 
@@ -48,7 +82,8 @@ __global__ void bitonic_sort_naive(int *d_keys, int N) {
     if (tid < N) d_keys[tid] = s[tid];
 }
 
-__global__ void bitonic_sort_v1(int *d_keys, int N) {
+// warp divergence optimisation
+__global__ void bitonic_sort_v2(int *d_keys, int N) {
     extern __shared__ int s[]; // size N
     int tid = threadIdx.x;
 
@@ -109,8 +144,9 @@ int main(int argc, char **argv) {
     cudaEventCreate(&start);
     cudaEventCreate(&stop);
     cudaEventRecord(start);
-    //bitonic_sort_naive<<<blocks, threads, sharedBytes>>>(d, N);
-    bitonic_sort_v1<<<blocks, threads, sharedBytes>>>(d, N);
+    bitonic_sort_naive<<<blocks, threads, sharedBytes>>>(d, N);
+    //bitonic_sort_v1<<<blocks, threads, sharedBytes>>>(d, N);
+    //bitonic_sort_v2<<<blocks, threads, sharedBytes>>>(d, N);
     cudaEventRecord(stop);
     cudaEventSynchronize(stop);
     cudaEventElapsedTime(&milliseconds, start, stop);
