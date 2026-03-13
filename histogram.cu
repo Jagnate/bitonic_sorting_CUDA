@@ -9,7 +9,7 @@ __global__ void histogram(int *hist_data, int *bin_data)
 }
 
 template <int blockSize>
-__global__ void histogram_smem(int *hist_data, int *bin_data) {
+__global__ void histogram_smem(int *hist_data, int *bin_data, int N) {
 	__shared__ int smeme[256];
 	int gtid = blockIdx.x * blockSize + threadIdx.x;
 	int tid = threadIdx.x;
