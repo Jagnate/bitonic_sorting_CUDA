@@ -8,6 +8,21 @@ __global__ void histogram(int *hist_data, int *bin_data)
     atomicAdd(&bin_data[hist_data[gtid]], 1);
 }
 
+template <int blockSize>
+__global__ void histogram_smem(int *hist_data, int *bin_data) {
+	__shared__ int smeme[256];
+	int gtid = blockIdx.x * blockSize + threadIdx.x;
+	int tid = threadIdx.x;
+	smem[tid] = 0;
+	__syncthreads();
+	for (int i = gtid; i < N; i += gridDim.x * blockSize) {
+		int val = hist_data[i];
+		atomicAdd(&smem[val], 1);
+	}
+	__syncthreads();
+	atomicAdd(&bin_data[tid], smem[tid]);
+}
+
 bool CheckResult(int *out, int *groudtruth, int N)
 {
     for (int i = 0; i < N; i++)
@@ -56,7 +71,8 @@ int main()
     cudaEventCreate(&start);
     cudaEventCreate(&stop);
     cudaEventRecord(start);
-    histogram<<<Grid, Block>>>(hist_data, bin_data);
+    //histogram<<<Grid, Block>>>(hist_data, bin_data);
+    histgram<blockSize><<<Grid, Block>>>(hist_data, bin_data, N);
     cudaEventRecord(stop);
     cudaEventSynchronize(stop);
     cudaEventElapsedTime(&milliseconds, start, stop);
