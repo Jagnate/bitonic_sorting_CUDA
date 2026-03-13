@@ -5,7 +5,7 @@
 #define UINT_MAX 0xFFFFFFFFu
 #endif
 // warp size (assume 32)
-const int WARP_SIZE = 32;
+#define WARP_SIZE 32
 
 __global__ void histogram(int *hist_data, int *bin_data)
 {
@@ -169,7 +169,7 @@ int main()
     cudaSetDevice(0);
     cudaDeviceProp deviceProp;
     cudaGetDeviceProperties(&deviceProp, 0);
-    const int blockSize = 256;
+    constexpr int blockSize = 256;
     int gridSize = std::min((N + 256 - 1) / 256, deviceProp.maxGridSize[0]);
     dim3 Grid(gridSize);
     dim3 Block(blockSize);
