@@ -30,7 +30,7 @@ __global__ void histogram_smem(int *hist_data, int *bin_data, int N) {
 
 // warp-level bitonic sort using warp shuffles (register-only)
 // Each lane starts with 'v' and ends with lane holding sorted values across warp in ascending order
-__device__ __always_inline__ unsigned warp_bitonic_sort(unsigned v) {
+__device__ __forceinline__ unsigned warp_bitonic_sort(unsigned v) {
     unsigned x = v;
     unsigned lane = threadIdx.x & 31;
     // bitonic sort network for 32 lanes using shfl_xor
