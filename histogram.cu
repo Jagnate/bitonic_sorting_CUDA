@@ -1,6 +1,9 @@
 #include <bits/stdc++.h>
 #include <cuda.h>
 #include "cuda_runtime.h"
+#ifndef UINT_MAX
+#define UINT_MAX 0xFFFFFFFFu
+#endif
 
 __global__ void histogram(int *hist_data, int *bin_data)
 {
@@ -8,14 +11,24 @@ __global__ void histogram(int *hist_data, int *bin_data)
     atomicAdd(&bin_data[hist_data[gtid]], 1);
 }
 
-
-#ifndef UINT_MAX
-#define UINT_MAX 0xFFFFFFFFu
-#endif
+template <int blockSize>
+__global__ void histogram_smem(int *hist_data, int *bin_data, int N) {
+	__shared__ int smem[256];
+	int gtid = blockIdx.x * blockSize + threadIdx.x;
+	int tid = threadIdx.x;
+	smem[tid] = 0;
+	__syncthreads();
+	for (int i = gtid; i < N; i += gridDim.x * blockSize) {
+		int val = hist_data[i];
+		atomicAdd(&smem[val], 1);
+	}
+	__syncthreads();
+	atomicAdd(&bin_data[tid], smem[tid]);
+}
 
 // 要求: blockSize 是 power-of-two，且 <= 1024
 template<int blockSize>
-__global__ void histogram_smem_bitonic(const int *hist_data, int *bin_data, int N) {
+__global__ void histogram_bitonic(const int *hist_data, int *bin_data, int N) {
     // per-block shared buffer to hold one tile of values (unsigned)
     extern __shared__ unsigned svals[]; // size = blockSize * sizeof(unsigned)
     const int tid = threadIdx.x;
@@ -78,39 +91,6 @@ __global__ void histogram_smem_bitonic(const int *hist_data, int *bin_data, int 
         }
         __syncthreads();
     }
-}
-
-template<int NBINS, int blockSize>
-__global__ void histogram_bitonic_sorting(const int *hist_data, int *bin_data, int N) {
-    const int WARP_SIZE = 32;
-    const int warps_per_block = blockSize / WARP_SIZE;
-    __shared__ int smem[NBINS]; // size >= NBINS (we'll use one copy per block)
-    int tid = threadIdx.x;
-    int lane = tid & 31;
-    int warp_id = tid >> 5; // 0..warps_per_block-1
-
-    int *warp_hist = smem + warp_id * NBINS;
-
-    // initialize shared block bins (parallel)
-    for (int b = lane; b < NBINS; b += blockDim.x) smem[b] = 0;
-    __syncthreads();
-
-    // strided processing
-    int gtid = blockIdx.x * blockDim.x + tid;
-    int stride = gridDim.x * blockDim.x;
-    for (int i = gtid; i < N; i += stride) {
-        int val = hist_data[i];
-        // accumulate into block-local bin in shared memory
-        atomicAdd(&warp_hist[val], 1); // shared-memory atomic
-    }
-    __syncthreads();
-
-    for (int b = lane; b < NBINS; b += WARP_SIZE) {
-        // sum across warps? we'll make one thread per (warp,bin) add to global
-        int v = warp_hist[b];
-        if (v) atomicAdd(&bin_data[b], v); // global atomic, but only warps_per_block times per bin
-    }
-    // done
 }
 
 bool CheckResult(int *out, int *groudtruth, int N)
