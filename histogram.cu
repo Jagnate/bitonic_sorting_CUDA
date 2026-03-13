@@ -4,7 +4,7 @@
 
 __global__ void histogram(int *hist_data, int *bin_data)
 {
-    int grid = threadIdx.x + blockIdx.x * blockDim.x;
+    int gtid = threadIdx.x + blockIdx.x * blockDim.x;
     atomicAdd(&bin_data[hist_data[gtid]], 1);
 }
 
@@ -22,7 +22,7 @@ bool CheckResult(int *out, int *groudtruth, int N)
 
 int main()
 {
-    float ms = 0;
+    float milliseconds = 0;
     const int N = 25600000;
     int *hist = (int *)malloc(N * sizeof(int));
     int *bin = (int *)malloc(256 * sizeof(int));
@@ -48,8 +48,8 @@ int main()
     cudaDeviceProp deviceProp;
     cudaGetDeviceProperties(&deviceProp, 0);
     const int blockSize = 256;
-    int gridSize = std::min((N + 256 - 1) / 256, deviceProp.maxGridSize[0])
-        dim3 Grid(gridSize);
+    int gridSize = std::min((N + 256 - 1) / 256, deviceProp.maxGridSize[0]);
+    dim3 Grid(gridSize);
     dim3 Block(blockSize);
 
     cudaEvent_t start, stop;
