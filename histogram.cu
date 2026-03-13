@@ -25,7 +25,7 @@ __global__ void histogram_smem(int *hist_data, int *bin_data, int N) {
 
 template<int NBINS, int blockSize>
 __global__ void histogram_bitonic_sorting(const int *hist_data, int *bin_data, int N) {
-    __shared__ int smem[256]; // size >= NBINS (we'll use one copy per block)
+    __shared__ int smem[NBINS]; // size >= NBINS (we'll use one copy per block)
     int tid = threadIdx.x;
     int lane = tid & 31;
 
@@ -43,8 +43,6 @@ __global__ void histogram_bitonic_sorting(const int *hist_data, int *bin_data, i
     }
     __syncthreads();
 
-    // write block-local bins to global per-block array (each block writes to its own region)
-    // no atomic needed because index is unique per block
     int base = blockIdx.x * NBINS;
     for (int b = tid; b < NBINS; b += blockDim.x) {
         bin_data[base + b] = smem[b];
