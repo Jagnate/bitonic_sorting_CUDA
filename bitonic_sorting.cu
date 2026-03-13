@@ -170,7 +170,7 @@ int main(int argc, char **argv) {
 
     // pad host array to numTiles * BLOCK_N with large sentinel (or INT_MAX)
     int padded = numTiles * BLOCK_N;
-    int *h = (int*)malloc(padded * sizeof(int))
+    int *h = (int*)malloc(padded * sizeof(int));
     std::mt19937 rng(12345);
     std::uniform_int_distribution<int> ud(0, 10000);
     for (int i = 0; i < N; ++i) h[i] = ud(rng);
@@ -183,9 +183,9 @@ int main(int argc, char **argv) {
     cudaMemcpy(d, h, bytes, cudaMemcpyHostToDevice);
 
     // launch: single block, N threads, shared memory N * sizeof(int)
-    dim3 blocks(1);
-    dim3 threads(N);
-    size_t sharedBytes = N * sizeof(int);
+    // dim3 blocks(1);
+    // dim3 threads(N);
+    // size_t sharedBytes = N * sizeof(int);
 
     // blocking
     int threads = BLOCK_N;
