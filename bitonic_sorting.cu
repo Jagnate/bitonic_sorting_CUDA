@@ -165,7 +165,8 @@ int main(int argc, char **argv) {
     size_t bytes = N * sizeof(int);
     float milliseconds = 0;
     const int BLOCK_N = 256;                // power of two, <= 1024
-    int total = 1 << 20;                    // total elements to sort (example)
+    //int total = 1 << 20;                    // total elements to sort (example)
+    int total = 1024;
     int numTiles = (total + BLOCK_N - 1) / BLOCK_N;
 
     // pad host array to numTiles * BLOCK_N with large sentinel (or INT_MAX)
