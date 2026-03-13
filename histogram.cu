@@ -143,7 +143,7 @@ int main()
     cudaEventRecord(start);
     //histogram<<<Grid, Block>>>(hist_data, bin_data);
     //histogram_smem<blockSize><<<Grid, Block>>>(hist_data, bin_data, N);
-    histogram_bitonic_sorting<blockSize><<<Grid, Block>>>(hist_data, bin_data, N);
+    histogram_bitonic<blockSize><<<Grid, Block>>>(hist_data, bin_data, N);
     cudaEventRecord(stop);
     cudaEventSynchronize(stop);
     cudaEventElapsedTime(&milliseconds, start, stop);
