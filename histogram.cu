@@ -4,6 +4,8 @@
 #ifndef UINT_MAX
 #define UINT_MAX 0xFFFFFFFFu
 #endif
+// warp size (assume 32)
+const int WARP_SIZE = 32;
 
 __global__ void histogram(int *hist_data, int *bin_data)
 {
@@ -25,9 +27,6 @@ __global__ void histogram_smem(int *hist_data, int *bin_data, int N) {
 	__syncthreads();
 	atomicAdd(&bin_data[tid], smem[tid]);
 }
-
-// warp size (assume 32)
-constexpr int WARP_SIZE = 32;
 
 // warp-level bitonic sort using warp shuffles (register-only)
 // Each lane starts with 'v' and ends with lane holding sorted values across warp in ascending order
