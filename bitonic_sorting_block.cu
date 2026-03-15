@@ -134,7 +134,7 @@ void bitonic_sort_global(int *d_keys, int N, cudaStream_t stream = 0) {
 // ---------------- 示例主程序 ----------------
 #include <algorithm>
 int main() {
-    const int N = 1 << 12; // 示例: 65536，必须是 2 的幂
+    const int N = 1 << 20; // 示例: 65536，必须是 2 的幂
     size_t bytes = N * sizeof(int);
 
     // host 初始化
