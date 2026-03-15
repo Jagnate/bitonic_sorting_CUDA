@@ -1,371 +1,181 @@
-# CUDA Bitonic Sorting Optimization Exploration
+# CUDA Bitonic Sorting — Optimization Exploration (Research Report)
 
 ## Overview
 
-This project explores **progressive optimization techniques for Bitonic Sorting on GPU using CUDA**.  
-The goal is to study how different GPU programming techniques impact the performance of a parallel sorting algorithm.
+This project investigates progressive optimization techniques for **Bitonic Sorting** on NVIDIA GPUs using CUDA.  
+The goal is to quantify how different GPU-focused optimizations (shared memory, bank-conflict mitigation, warp-level primitives) impact the performance of a highly-structured sorting network.
 
-Bitonic sort is a classic **sorting network algorithm** that is well suited for parallel architectures such as GPUs due to its structured comparison pattern.
-
-In this project, several implementations are developed and optimized step by step:
-
-1. Naive tiled implementation
-2. Shared memory optimization
-3. Bank conflict mitigation using padding
-4. Warp-level primitive optimization
-
-We evaluate their performance and analyze the trade-offs between different optimization strategies.
+This repository contains multiple implementations and an experimental evaluation comparing their performance and trade-offs.
 
 ---
 
-# Bitonic Sort Algorithm
-
-## Bitonic Sequence
-
-A **bitonic sequence** is a sequence that first monotonically increases and then monotonically decreases.
-
-Example:
-
-```
-1 3 7 8 6 5 4 2
-```
-
-This sequence increases and then decreases.
-
-Bitonic sort works by:
-
-1. Constructing bitonic sequences
-2. Performing **bitonic merge operations** to produce sorted sequences.
-
----
-
-## Bitonic Sorting Network
-
-The following diagram illustrates the sorting network for **8 elements**:
-
-```
-Stage 1
-(0,1) (2,3) (4,5) (6,7)
-
-Stage 2
-(0,2) (1,3) (4,6) (5,7)
-
-Stage 3
-(1,2) (5,6)
-
-Stage 4
-(0,4) (1,5) (2,6) (3,7)
-
-Stage 5
-(2,4) (3,5)
-
-Stage 6
-(1,2) (3,4) (5,6)
-```
-
-Graphically this can be visualized as:
-
-```
-0 ──┐     ┌─────────────
-1 ──┘─────┘
-2 ──┐     ┌─────────────
-3 ──┘─────┘
-4 ──┐     ┌─────────────
-5 ──┘─────┘
-6 ──┐     ┌─────────────
-7 ──┘─────┘
-```
-
-Each horizontal line represents a data element, and each vertical comparator swaps elements if necessary.
-
-The algorithm complexity is:
-
-```
-O(n log² n)
-```
-
-Although asymptotically slower than quicksort, the **deterministic comparison pattern** makes it ideal for GPU parallelization.
-
----
-
-# GPU Implementation Strategy
-
-Because a CUDA thread block has a limited number of threads (typically **1024**), large arrays must be processed using **tiling**:
-
-1. Divide the array into **tiles**
-2. Each block sorts one tile
-3. Global merge steps combine sorted tiles
-
-Optimization strategies explored include:
-
-- reducing global memory traffic
-- using shared memory
-- reducing shared memory bank conflicts
-- leveraging warp-level primitives
-
----
-
-# Project Structure
+## Repository layout
 
 ```
 .
-├── bitontic_sorting.cu
-├── bitontic_sorting_block.cu
-├── bitontic_sorting_block_v1.cu
-├── bitontic_sorting_block_v2.cu
-├── bitontic_sorting_block_v3.cu
+├── bitontic_sorting.cu                   # single-block bitonic (N < 1024)
+├── bitontic_sorting_block.cu             # tiled naive version (baseline)
+├── bitontic_sorting_block_v1.cu          # shared-memory optimized
+├── bitontic_sorting_block_v2.cu          # padding attempt to reduce bank conflicts
+├── bitontic_sorting_block_v3.cu          # warp-level primitives (shuffle) optimization
+├── docs/
+│   ├── bitonic_network.png               # bitonic network diagram
+│   └── cuda_mapping.png                  # CUDA thread mapping diagram
 └── README.md
 ```
 
----
-
-# Implementation Versions
-
-## 1. `bitontic_sorting.cu`
-
-A simple bitonic sort kernel running **entirely within a single block**.
-
-### Characteristics
-
-- Uses shared memory
-- Only supports
-
-```
-N < 1024
-```
-
-due to CUDA block size limits.
-
-This version demonstrates the **basic bitonic sorting network on GPU**.
+> Note: I generated `docs/bitonic_network.png` and `docs/cuda_mapping.png` for visualization; place them in `docs/` as shown.
 
 ---
 
-## 2. `bitontic_sorting_block.cu`
+## Background: Bitonic Sorting
 
-A **naive tiled implementation** that supports larger arrays.
+Bitonic sort is a sorting-network algorithm consisting of fixed compare-and-swap stages that transform input sequences into sorted order.  
+Its regular structure and deterministic communication pattern make it attractive for SIMD and GPU architectures.
 
-### Approach
+**Key properties**
+- Input size typically assumed to be $begin:math:text$ n \= 2\^k $end:math:text$
+- Complexity: $begin:math:text$ O\(n \\log\^2 n\) $end:math:text$
+- Comparison pattern is data-independent (good for GPUs)
 
-1. Divide the array into tiles
-2. Each CUDA block sorts one tile
-3. Global merge stages combine tiles
+### Bitonic sorting network (visual)
 
-### Optimization
+![Bitonic Sorting Network](docs/bitonic_network.png)
 
-None.
-
-This version serves as the **baseline implementation**.
-
----
-
-## 3. `bitontic_sorting_block_v1.cu`
-
-Introduces **shared memory optimization**.
-
-### Idea
-
-Instead of performing all operations on global memory:
-
-```
-global memory → shared memory
-sort in shared memory
-shared memory → global memory
-```
-
-### Benefit
-
-Shared memory is much faster than global memory, which reduces memory latency.
+*Figure: Bitonic sorting network for 8 elements (phases and steps).*
 
 ---
 
-## 4. `bitontic_sorting_block_v2.cu`
+## Mapping Bitonic Sort to CUDA
 
-Attempts to mitigate **shared memory bank conflicts** using **padding**.
+Each comparator in the network can be performed by a GPU thread. The typical mapping strategy:
 
-### Bank Conflict Problem
+- Partition the input into tiles (each tile handled by a CUDA block)
+- Load a tile into **shared memory**
+- Perform tile-local bitonic sorting entirely in shared memory
+- Perform global merge stages by launching kernels for each `(k, j)` stage, or by performing tile-pair merges in shared memory
 
-Shared memory is divided into multiple memory banks.  
-When multiple threads access the same bank simultaneously, accesses are serialized.
-
-The bitonic access pattern
+The partner index in the typical implementation uses bitwise XOR:
 
 ```
 ixj = tid ^ j
 ```
 
-can cause many threads to access the same bank.
+This corresponds directly to the comparator connections in the sorting network.
 
-### Proposed Solution
+### CUDA mapping illustration
 
-Introduce padding in shared memory:
+![CUDA mapping: thread ↔ partner](docs/cuda_mapping.png)
 
-```
-padded_idx = tid + tid / warpSize
-```
-
-This offsets addresses to reduce bank conflicts.
+*Figure: Mapping threads to comparators and typical partner computation `ixj = tid ^ j`. Warps are shown grouping contiguous thread lanes.*
 
 ---
 
-## 5. `bitontic_sorting_block_v3.cu`
+## Implementations
 
-Introduces **warp-level primitives** for optimization.
+### 1) `bitontic_sorting.cu` — Single-block bitonic (baseline)
+- Implements bitonic sorting entirely within a single CUDA thread block using shared memory.
+- Limitation: Supports only `N < 1024` (or `N <= maxThreadsPerBlock`) due to block size and shared memory constraints.
+- Purpose: A minimal working reference and correctness baseline.
 
-### Key Idea
+### 2) `bitontic_sorting_block.cu` — Tiled naive
+- Splits the array into tiles and sorts each tile via a per-block kernel.
+- Performs global merge stages via host-driven kernel launches (each `(k,j)` launched as a kernel).
+- Baseline to measure impact of further optimizations.
 
-When:
+### 3) `bitontic_sorting_block_v1.cu` — Shared-memory optimized
+- Loads each tile into shared memory and performs the bitonic network there.
+- Reduces global memory traffic and improves latency compared to naive tiling.
 
-```
-j < warpSize (32)
-```
+### 4) `bitontic_sorting_block_v2.cu` — Padding for bank-conflict mitigation
+- Adds padding within shared memory layout to try reducing bank conflicts.
+- Example padding strategy:
+  ```cpp
+  padded_idx = i + (i >> 5); // add 1 slot per warp (warpSize=32)
+  ```
+- Intended to reduce serialization at shared-bank level when threads access `ixj = tid ^ j`.
 
-the comparison partner must be within the **same warp**.
-
-Instead of using shared memory:
-
-```
-shared memory
-+ __syncthreads()
-```
-
-we use warp shuffle instructions:
-
-```
-__shfl_xor_sync()
-```
-
-### Advantages
-
-- avoids shared memory
-- avoids bank conflicts
-- removes synchronization overhead
-- uses fast register-level communication
+### 5) `bitontic_sorting_block_v3.cu` — Warp-level shuffle optimization
+- For `j < warpSize` (intra-warp partners), use `__shfl_xor_sync` to exchange values via registers.
+- For `j >= warpSize`, fall back to shared-memory operations.
+- This avoids shared-bank conflicts and synchronization costs for many stages.
 
 ---
 
-# Experimental Setup
+## Experimental Setup
 
-Input size:
-
-```
-N = 2^25
-```
-
-GPU execution time is measured for each implementation.
+- Input size: `N = 2^25`
+- GPU: (report your GPU model here)
+- Timing: kernel-level timings averaged over multiple runs; ensure warms-up and consistent CUDA device settings.
 
 ---
 
-# Performance Results
+## Results
 
 | Version | Optimisation | Latency (ms) |
-|-------|-------------|-------------|
-| naive | - | 4.992576 |
-| v1 | shared memory optimisation | 4.490467 |
-| v2 | bank conflict optimisation | 4.853584 |
-| v3 | warp-level optimisation | 2.872055 |
+|--------:|-------------:|-------------:|
+| naive   | -            | 4.992576    |
+| v1      | shared       | 4.490467    |
+| v2      | padding      | 4.853584    |
+| v3      | warp-shuffle | 2.872055    |
 
-### Speedup Compared to Naive
-
-| Version | Speedup |
-|-------|--------|
-| v1 | 1.11x |
-| v2 | 1.03x |
-| v3 | 1.74x |
-
-Warp-level optimization provides the **largest improvement**.
+### Observations
+- Shared memory optimization (v1) provides moderate improvement by reducing global memory accesses.
+- Padding (v2) aimed to reduce bank conflicts but resulted in slightly worse performance in this experiment.
+- Warp-level shuffle (v3) yields the largest performance gain, removing shared memory access for intra-warp exchanges and lowering synchronization overhead.
 
 ---
 
-# Analysis
+## Analysis: Why v2 (padding) performed worse
 
-## Why Shared Memory Helps
+Although padding reduces certain shared-memory bank conflicts, several practical factors can make padding slower overall:
 
-Shared memory reduces global memory accesses, which significantly lowers latency.
+1. **Extra index arithmetic**  
+   Padding requires additional index computations (e.g., `pidx = i + (i >> 5)`), which increases instruction count and may add integer arithmetic stalls.
 
-This explains the improvement from:
+2. **Increased shared-memory footprint**  
+   Padding inflates shared memory usage per block, potentially reducing occupancy (fewer concurrent blocks per SM), which can decrease overall throughput.
 
-```
-naive → v1
-```
+3. **Bank conflicts may not have been the dominant cost**  
+   If the kernel was limited by occupancy, compute, or other memory-level bottlenecks, removing bank conflicts yields little benefit.
 
----
+4. **Changed memory/coalescing behavior**  
+   Padding alters access patterns, possibly reducing L1/L2 cache effectiveness.
 
-## Why Padding (v2) Did Not Improve Performance
-
-Although padding reduces bank conflicts, the performance decreased slightly.
-
-Possible reasons include:
-
-### 1. Extra Index Computation
-
-Padding introduces additional index calculations:
-
-```
-padded_idx = tid + tid / warpSize
-```
-
-These arithmetic operations increase instruction count.
-
-On GPUs, this extra overhead can outweigh the benefits of reduced bank conflicts.
+**Conclusion:** Padding is a useful tool, but must be used judiciously—often combined with other strategies (warp-shuffle, smaller tiles) after profiling.
 
 ---
 
-### 2. Bank Conflicts Were Not the Main Bottleneck
+## Profiling and Debugging Tips
 
-Profiling suggests that bank conflicts were not severe enough to dominate execution time.
-
-Therefore eliminating them provides little benefit.
-
----
-
-### 3. Reduced Memory Efficiency
-
-Padding modifies memory layout, which may negatively impact memory access patterns.
-
----
-
-## Why Warp-Level Optimization Works Best
-
-The warp-level version eliminates several overheads simultaneously:
-
-- no shared memory access
-- no bank conflicts
-- no block-level synchronization
-- register-to-register communication
-
-Because shuffle instructions operate **within a warp**, they are extremely efficient.
+- Use **Nsight Compute (ncu)** to inspect:
+  - `achieved_occupancy`
+  - `l1tex__t_mem_bank_conflict_pipe_lsu.sum`
+  - `dram__bytes.read` / `dram__bytes.write`
+  - `sm__warp_issue_stalled_long_metric`
+- If bank conflicts are observed, try:
+  - small padding increments (per-warp, or per-half-warp)
+  - `__shfl_xor_sync` for intra-warp stages
+  - reducing tile size to increase occupancy
 
 ---
 
-# Key Takeaways
+## How to build and run
 
-1. Shared memory optimization provides moderate performance improvements.
-2. Bank conflict mitigation via padding may introduce additional overhead.
-3. Warp-level primitives (`__shfl_sync`) are highly effective for intra-warp communication.
-4. Understanding GPU architecture (warps, memory hierarchy, synchronization) is essential for performance optimization.
-
----
-
-# Build and Run
-
-Compile with:
+Compile with `nvcc`:
 
 ```bash
-nvcc -O3 bitontic_sorting_block_v3.cu -o bitonic
+nvcc -O3 bitontic_sorting_block_v3.cu -o bitonic_v3
+./bitonic_v3
 ```
 
-Run:
-
-```bash
-./bitonic
-```
+Replace `v3` with `v2`, `v1`, or the naive version to test other variants.
 
 ---
 
-# Future Work
+## Future Work
 
-Possible future improvements include:
-
-- using cooperative groups for cross-block synchronization
-- implementing hierarchical bitonic merge
-- comparing with GPU radix sort or thrust::sort
+- Implement tile-pair shared merges to reduce global-stage launches.
+- Explore `cudaLaunchCooperativeKernel` + cooperative groups for grid-level synchronization.
+- Compare with highly-optimized libraries like **Thrust** or **CUB**.
+- Do a deeper micro-architectural profiling per kernel stage and per `j` value.
