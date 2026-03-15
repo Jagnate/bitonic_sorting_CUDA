@@ -110,25 +110,27 @@ void bitonic_sort_global(int *d_keys, int N, cudaStream_t stream = 0) {
     cudaEventCreate(&start);
     cudaEventCreate(&stop);
     cudaEventRecord(start);
-    // ---------- 1) 每个 tile 局部排序 ----------
-    bitonic_sort_tile<<<grid, block, sharedBytes, stream>>>(d_keys, tileSize, N);
-    cudaGetLastError();
-    cudaStreamSynchronize(stream); // 必要的全局同步，以保证局部排序完成
+    for(int it = 0; it < 10; it ++) {
+        // ---------- 1) 每个 tile 局部排序 ----------
+        bitonic_sort_tile<<<grid, block, sharedBytes, stream>>>(d_keys, tileSize, N);
+        cudaGetLastError();
+        cudaStreamSynchronize(stream); // 必要的全局同步，以保证局部排序完成
 
-    // ---------- 2) 全局合并阶段（host-driven k/j loops） ----------;
-    // 从 tileSize 的两个一组开始合并，直到 k == N
-    for (int k = 2 * tileSize; k <= N; k <<= 1) {
-        for (int j = k >> 1; j > 0; j >>= 1) {
-            bitonic_stage<<<blocksPerGrid, threadsPerBlock, 0, stream>>>(d_keys, N, k, j);
-            cudaGetLastError();
-            cudaStreamSynchronize(stream); // 每个 j 阶段必须全局同步
+        // ---------- 2) 全局合并阶段（host-driven k/j loops） ----------;
+        // 从 tileSize 的两个一组开始合并，直到 k == N
+        for (int k = 2 * tileSize; k <= N; k <<= 1) {
+            for (int j = k >> 1; j > 0; j >>= 1) {
+                bitonic_stage<<<blocksPerGrid, threadsPerBlock, 0, stream>>>(d_keys, N, k, j);
+                cudaGetLastError();
+                cudaStreamSynchronize(stream); // 每个 j 阶段必须全局同步
+            }
         }
     }
     cudaEventRecord(stop);
     cudaEventSynchronize(stop);
     cudaEventElapsedTime(&milliseconds, start, stop);
     cudaDeviceSynchronize();
-    printf("latency = %f ms\n", milliseconds);
+    printf("latency = %f ms\n", milliseconds / 10.0f);
 }
 
 // ---------------- 示例主程序 ----------------
