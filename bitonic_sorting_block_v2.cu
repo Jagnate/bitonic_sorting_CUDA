@@ -119,9 +119,17 @@ void bitonic_sort_global(int *d_keys, int N, cudaStream_t stream = 0) {
     int tiles = N / tileSize; // 因为 N 为 2 的幂且 tileSize 为 2 的幂，整除成立
 
     // ---------- 1) 每个 tile 局部排序 ----------
-    dim3 block(tileSize);
+    int tileSize = /* 例如 512 */;
+    int WARP = 32;
+    int padPerWarp = 1; // 我们在实现里隐含使用 padPerWarp==1（每 warp +1）
+    int paddedTile = tileSize + (tileSize + WARP - 1) / WARP * padPerWarp;
+    // 更简单的等价写法： paddedTile = tileSize + (tileSize + 31) / 32;
+
+    size_t sharedBytes = paddedTile * sizeof(int);
+
+    int tiles = N / tileSize; // 你保证 N 为 2 的幂且整除
     dim3 grid(tiles);
-    size_t sharedBytes = tileSize * sizeof(int);
+    dim3 block(tileSize); // 或者 blockDim.x >= tileSize（内核会用 active 控制）
     // ---------- 2) 全局合并阶段（host-driven k/j loops） ----------
     // 线程配置用于全局阶段
     int threadsPerBlock = 256;
