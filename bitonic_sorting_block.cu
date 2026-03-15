@@ -137,6 +137,7 @@ void bitonic_sort_global(int *d_keys, int N, cudaStream_t stream = 0) {
     cudaEventSynchronize(stop);
     cudaEventElapsedTime(&milliseconds, start, stop);
     cudaDeviceSynchronize();
+    printf("latency = %f ms\n", milliseconds);
 }
 
 // ---------------- 示例主程序 ----------------
@@ -165,7 +166,6 @@ int main() {
         if (h[i-1] > h[i]) { ok = false; break; }
     }
     printf("sorted? %s\n", ok ? "YES" : "NO");
-    printf("latency = %f ms\n", milliseconds);
 
     // 清理
     cudaFree(d);
