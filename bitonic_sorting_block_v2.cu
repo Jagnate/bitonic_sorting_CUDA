@@ -30,7 +30,7 @@ __global__ void bitonic_sort_tile(int *d_keys, int tileSize, int N) {
     // 计算 padded 索引的 inline 方式：padded_idx(i) = i + (i / WARP)
     // 注意：在 device 中别把函数调用太多，直接内联计算更简单高效
     if (active) {
-        int pidx = tid + (tid / WARP);
+        int pidx = tid + (tid >> 5);
         s_raw[pidx] = d_keys[gidx];
     }
     __syncthreads();
