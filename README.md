@@ -1,11 +1,8 @@
-# CUDA Bitonic Sorting — Optimization Exploration (Research Report)
+# CUDA Bitonic Sorting
 
 ## Overview
 
 This project investigates progressive optimization techniques for **Bitonic Sorting** on NVIDIA GPUs using CUDA.  
-The goal is to quantify how different GPU-focused optimizations (shared memory, bank-conflict mitigation, warp-level primitives) impact the performance of a highly-structured sorting network.
-
-This repository contains multiple implementations and an experimental evaluation comparing their performance and trade-offs.
 
 ---
 
@@ -23,8 +20,6 @@ This repository contains multiple implementations and an experimental evaluation
 │   └── cuda_mapping.png                  # CUDA thread mapping diagram
 └── README.md
 ```
-
-> Note: I generated `docs/bitonic_network.png` and `docs/cuda_mapping.png` for visualization; place them in `docs/` as shown.
 
 ---
 
@@ -105,7 +100,7 @@ This corresponds directly to the comparator connections in the sorting network.
 ## Experimental Setup
 
 - Input size: `N = 2^25`
-- GPU: (report your GPU model here)
+- GPU: RTX3090
 - Timing: kernel-level timings averaged over multiple runs; ensure warms-up and consistent CUDA device settings.
 
 ---
