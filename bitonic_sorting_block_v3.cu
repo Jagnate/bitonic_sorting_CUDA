@@ -17,49 +17,35 @@ static inline int prevPow2(int v) {
 // ---------------- tile 内 bitonic sort kernel ----------------
 // 每个 block 处理一个 tile，tileSize 必须是 2 的幂，并且我们启动时设置 blockDim.x == tileSize
 __global__ void bitonic_sort_tile(int *d_keys, int tileSize, int N) {
-    extern __shared__ int s_raw[]; // 分配大小见 host 启动处
-    const int WARP = 32;           // 假设 warpSize == 32（大多数 GPU 都是）
+    extern __shared__ int s[]; // tileSize * sizeof(int)
     int tid = threadIdx.x;
     int tileId = blockIdx.x;
     int base = tileId * tileSize;
+
     int gidx = base + tid;
-
-    // active：只有 tid < tileSize 的线程参与逻辑计算，但所有线程仍需到达 __syncthreads()
-    bool active = (tid < tileSize);
-
-    // 计算 padded 索引的 inline 方式：padded_idx(i) = i + (i / WARP)
-    // 注意：在 device 中别把函数调用太多，直接内联计算更简单高效
-    if (active) {
-        int pidx = tid + (tid >> 5);
-        s_raw[pidx] = d_keys[gidx];
-    }
+    // 载入（因为 N 为 2 的幂，且 tileSize <= N 且 tiles = N / tileSize，最后 tile 都完整）
+    s[tid] = d_keys[gidx];
     __syncthreads();
 
-    // bitonic 网络：对 tileSize 内部进行排序，访问共享内存时使用 padded 索引
+    // shared memory 上的标准 bitonic 网络（只在 tileSize 内）
     for (int k = 2; k <= tileSize; k <<= 1) {
         for (int j = k >> 1; j > 0; j >>= 1) {
-            if (active) {
-                int ixj = tid ^ j; // partner index within tile
-                if (ixj < tileSize) {
-                    int pidx_tid = tid + (tid >> 5);
-                    int pidx_ixj = ixj + (ixj >> 5);
-                    int a = s_raw[pidx_tid];
-                    int b = s_raw[pidx_ixj];
-                    int minv = (a < b) ? a : b;
-                    int maxv = (a < b) ? b : a;
-                    bool ascending = ((tid & k) == 0);
-                    s_raw[pidx_tid] = ascending ? minv : maxv;
-                }
+            int ixj = tid ^ j;
+            // ixj < tileSize 始终成立因为 tid < tileSize 且 j < tileSize（safe），但保留检查以更安全
+            if (ixj < tileSize) {
+                int a = s[tid];
+                int b = s[ixj];
+                int minv = (a < b) ? a : b;
+                int maxv = (a < b) ? b : a;
+                bool ascending = ((tid & k) == 0);
+                s[tid] = ascending ? minv : maxv;
             }
             __syncthreads();
         }
     }
 
-    // 写回（只写存在的元素）
-    if (active) {
-        int pidx = tid + (tid / WARP);
-        d_keys[gidx] = s_raw[pidx];
-    }
+    // 写回全局内存
+    d_keys[gidx] = s[tid];
 }
 
 // ---------------- 全局 (k, j) 阶段 kernel ----------------
@@ -119,15 +105,9 @@ void bitonic_sort_global(int *d_keys, int N, cudaStream_t stream = 0) {
     int tiles = N / tileSize; // 因为 N 为 2 的幂且 tileSize 为 2 的幂，整除成立
 
     // ---------- 1) 每个 tile 局部排序 ----------
-    int WARP = 32;
-    int padPerWarp = 1; // 我们在实现里隐含使用 padPerWarp==1（每 warp +1）
-    int paddedTile = tileSize + (tileSize + WARP - 1) / WARP * padPerWarp;
-    // 更简单的等价写法： paddedTile = tileSize + (tileSize + 31) / 32;
-
-    size_t sharedBytes = paddedTile * sizeof(int);
-
+    dim3 block(tileSize);
     dim3 grid(tiles);
-    dim3 block(tileSize); // 或者 blockDim.x >= tileSize（内核会用 active 控制）
+    size_t sharedBytes = tileSize * sizeof(int);
     // ---------- 2) 全局合并阶段（host-driven k/j loops） ----------
     // 线程配置用于全局阶段
     int threadsPerBlock = 256;
