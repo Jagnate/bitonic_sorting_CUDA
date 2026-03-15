@@ -17,9 +17,15 @@ static inline int prevPow2(int v) {
 // ---------------- tile 内 bitonic sort kernel ----------------
 // 每个 block 处理一个 tile，tileSize 必须是 2 的幂，并且我们启动时设置 blockDim.x == tileSize
 __global__ void bitonic_sort_tile(int *d_keys, int tileSize, int N) {
+    extern __shared__ int s[]; // tileSize * sizeof(int)
     int tid = threadIdx.x;
     int tileId = blockIdx.x;
     int base = tileId * tileSize;
+
+    int gidx = base + tid;
+    // 载入（因为 N 为 2 的幂，且 tileSize <= N 且 tiles = N / tileSize，最后 tile 都完整）
+    s[tid] = d_keys[gidx];
+    __syncthreads();
 
     // shared memory 上的标准 bitonic 网络（只在 tileSize 内）
     for (int k = 2; k <= tileSize; k <<= 1) {
@@ -27,16 +33,19 @@ __global__ void bitonic_sort_tile(int *d_keys, int tileSize, int N) {
             int ixj = tid ^ j;
             // ixj < tileSize 始终成立因为 tid < tileSize 且 j < tileSize（safe），但保留检查以更安全
             if (ixj < tileSize) {
-                int a = d_keys[base + tid];
-                int b = d_keys[base + ixj];
+                int a = s[tid];
+                int b = s[ixj];
                 int minv = (a < b) ? a : b;
                 int maxv = (a < b) ? b : a;
                 bool ascending = ((tid & k) == 0);
-                d_keys[base + tid] = ascending ? minv : maxv;
+                s[tid] = ascending ? minv : maxv;
             }
             __syncthreads();
         }
     }
+
+    // 写回全局内存
+    d_keys[gidx] = s[tid];
 }
 
 // ---------------- 全局 (k, j) 阶段 kernel ----------------
