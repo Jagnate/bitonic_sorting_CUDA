@@ -18,34 +18,69 @@ static inline int prevPow2(int v) {
 // 每个 block 处理一个 tile，tileSize 必须是 2 的幂，并且我们启动时设置 blockDim.x == tileSize
 __global__ void bitonic_sort_tile(int *d_keys, int tileSize, int N) {
     extern __shared__ int s[]; // tileSize * sizeof(int)
+    const unsigned FULL_MASK = 0xffffffffu;
+    const int WARP = 32;
+
     int tid = threadIdx.x;
     int tileId = blockIdx.x;
     int base = tileId * tileSize;
-
     int gidx = base + tid;
-    // 载入（因为 N 为 2 的幂，且 tileSize <= N 且 tiles = N / tileSize，最后 tile 都完整）
-    s[tid] = d_keys[gidx];
+    bool active = (tid < tileSize);
+
+    // load into shared (so that later cross-warp steps can use it)
+    if (active) s[tid] = d_keys[gidx];
     __syncthreads();
 
-    // shared memory 上的标准 bitonic 网络（只在 tileSize 内）
+    // bitonic network on shared, but use warp-shuffle for j < 32
     for (int k = 2; k <= tileSize; k <<= 1) {
-        for (int j = k >> 1; j > 0; j >>= 1) {
-            int ixj = tid ^ j;
-            // ixj < tileSize 始终成立因为 tid < tileSize 且 j < tileSize（safe），但保留检查以更安全
-            if (ixj < tileSize) {
-                int a = s[tid];
-                int b = s[ixj];
-                int minv = (a < b) ? a : b;
-                int maxv = (a < b) ? b : a;
-                bool ascending = ((tid & k) == 0);
-                s[tid] = ascending ? minv : maxv;
+        int j = k >> 1;
+        while (j > 0) {
+            if (j >= WARP) {
+                // use shared memory compare-swap (cross-warp)
+                if (active) {
+                    int ixj = tid ^ j;
+                    if (ixj < tileSize) {
+                        int a = s[tid];
+                        int b = s[ixj];
+                        int minv = (a < b) ? a : b;
+                        int maxv = (a < b) ? b : a;
+                        bool ascending = ((tid & k) == 0);
+                        s[tid] = ascending ? minv : maxv;
+                    }
+                }
+                // must synchronize after shared writes
+                __syncthreads();
+                j >>= 1;
+            } else {
+                // j < WARP: handle all remaining small-j steps using warp shuffles
+                // Load current value into register once
+                int val = 0;
+                if (active) val = s[tid];
+                // perform all remaining j steps (j, j>>1, ... until j==0)
+                for (; j > 0; j >>= 1) {
+                    // partner value within warp (safe since j < WARP)
+                    int other = __shfl_xor_sync(FULL_MASK, val, j);
+                    // Compare and pick min/max according to ascending flag (which depends on global tid & k)
+                    // Note: ascending depends on (tid & k) for the current k (not on lane)
+                    if (active) {
+                        int minv = (val < other) ? val : other;
+                        int maxv = (val < other) ? other : val;
+                        bool ascending = ((tid & k) == 0);
+                        val = ascending ? minv : maxv;
+                    }
+                    // No __syncthreads() here — shuffle is within warp and register-local
+                }
+                // write back results of shuffle-phase to shared so later cross-warp steps see them
+                if (active) s[tid] = val;
+                __syncthreads();
+                // now j == 0, break outer while
+                break;
             }
-            __syncthreads();
-        }
-    }
+        } // end while j
+    } // end for k
 
-    // 写回全局内存
-    d_keys[gidx] = s[tid];
+    // write back to global memory
+    if (active) d_keys[gidx] = s[tid];
 }
 
 // ---------------- 全局 (k, j) 阶段 kernel ----------------
